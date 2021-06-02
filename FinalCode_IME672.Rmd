@@ -1,0 +1,356 @@
+---
+title: "FinalCode_IME672.Rmd"
+author: "Arvind Singh"
+date: "02/06/2016"
+output: html_document
+---
+
+First we preprocess and transform the data for model building
+
+```{r}
+setwd("~/R")
+data<-read.csv('Cell2Cell.csv')
+options(scipen=100)
+options(digits=2)
+stat.desc(data)
+
+# DATA CLEANING>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+# Selecting only calibration data
+trainData = subset(data, data$CALIBRAT==1)
+
+# Removing column of Customer ID (1,30) and CALIBRAT (78)
+trainData = subset(trainData, select = -c(1,31,78))
+stat.desc(trainData)
+
+#replacing missing values for income and setprc (0 to NA)
+trainData$INCOME[trainData$INCOME == 0] <- NA
+trainData$SETPRC[trainData$SETPRC == 0] <- NA
+
+#Merging Credit labels (Very high to lowest)
+merge<-factor(apply(trainData[,33:39], 1, function(x) which(x == 1)), labels = colnames(trainData[,33:39]))
+trainData$CREDIT<-as.ordered(merge)
+trainData = subset(trainData, select = -c(33:39))
+trainData <- trainData[c(1:68,70,69)]
+
+#Merging Region labels (Rural, suburban, town, none)
+trainData$PRIZMNONE = 0
+trainData <- trainData[c(1:35,71,36:70)]
+trainData$PRIZMNONE[trainData$PRIZMRUR == 0 & trainData$PRIZMUB == 0 & trainData$PRIZMTWN == 0] <- 1
+merge<-factor(apply(trainData[,33:36], 1, function(x) which(x == 1)), labels = colnames(trainData[,33:36]))
+trainData$PRIZM<-as.factor(merge)
+trainData = subset(trainData, select = -c(33:36))
+trainData <- trainData[c(1:66,68,67)]
+
+#Merging Occupation labels (professional, clerical, crafts, student, homemaker, retired, self-employed, None)
+trainData$OCCNONE = 0
+trainData <- trainData[c(1:43,69,44:68)]
+trainData$OCCNONE[trainData$OCCRET == 0 & trainData$OCCPROF == 0 & trainData$OCCCLER == 0 & trainData$OCCCRFT == 0 & trainData$OCCSTUD == 0 & trainData$OCCHMKR == 0 & trainData$OCCSELF == 0] <- 1
+merge<-factor(apply(trainData[,37:44], 1, function(x) which(x == 1)), labels = colnames(trainData[,37:44]))
+trainData$OCC<-as.factor(merge)
+trainData = subset(trainData, select = -c(37:44))
+trainData <- trainData[c(1:60,62,61)]
+
+#Merging Marital status labels (unknown, Married, Not Married)
+merge<-factor(apply(trainData[,38:40], 1, function(x) which(x == 1)), labels = colnames(trainData[,38:40]))
+trainData$MARRY<-as.factor(merge)
+trainData = subset(trainData, select = -c(38:40))
+trainData <- trainData[c(1:58,60,59)]
+
+#Merging Cell Phone User status  (new cell user or not or unknown)
+trainData$NEWCELLUNKNOWN = 0
+trainData <- trainData[c(1:47,61,48:60)]
+trainData$NEWCELLUNKNOWN[trainData$NEWCELLY == 0 & trainData$NEWCELLN == 0] <- 1
+merge<-factor(apply(trainData[,46:48], 1, function(x) which(x == 1)), labels = colnames(trainData[,46:48]))
+trainData$NEWCELL<-as.factor(merge)
+trainData = subset(trainData, select = -c(46:48))
+trainData <- trainData[c(1:57,59,58)]
+
+# convert categorical to numerical ranks
+trainData$CSA <- as.factor(trainData$CSA)
+
+# Rearrange rows to contain continuous data in initial 35 columns and binary/categorical later.
+trainData <- trainData[c(1:21,23:25,27:31,44:46,48,50,52,22,32:43,47,49,51,53:58,26,59)]      
+
+## Currently, we have written the entire code considering all attributes as numeric., 
+for (i in 36:59) {
+  trainData[,i] <- as.numeric(trainData[,i])
+}
+summary(trainData)
+
+# Data Cleaning
+cleanData <- trainData
+# Subsetting data according to churndep
+cleanData1=subset(cleanData, cleanData$CHURNDEP==1)       
+cleanData0=subset(cleanData, cleanData$CHURNDEP==0)
+
+# Replacing NAs with median
+for (i in 1:35) {
+  cleanData1[,i][is.na(cleanData1[,i])] <- median(cleanData1[,i], na.rm = TRUE)
+  cleanData0[,i][is.na(cleanData0[,i])] <- median(cleanData0[,i], na.rm = TRUE)
+}
+
+# Detecting outliers (beyond 1.5*IQR) and replacing them with median
+for (i in 1:35) {
+  low<-quantile(cleanData1[,i], probs = 0.25)
+  med<-median(cleanData1[,i])
+  high<-quantile(cleanData1[,i], probs = 0.75)
+  diff<-1.5*(high-low)
+  cleanData1[,i][cleanData1[,i] < (low-diff) | cleanData1[,i] > (high+diff) ] <- median(cleanData1[,i])
+  
+  low<-quantile(cleanData0[,i], probs = 0.25)
+  med<-median(cleanData0[,i])
+  high<-quantile(cleanData0[,i], probs = 0.75)
+  diff<-1.5*(high-low)
+  cleanData0[,i][cleanData0[,i] < (low-diff) | cleanData0[,i] > (high+diff) ] <- median(cleanData0[,i])
+}
+
+# Bind the cleaned data (rows) of the two class labels into one
+cleanData <- rbind(cleanData1,cleanData0)
+
+# Dimension reduction of data
+cleanDimRed<- cleanData
+
+# Removing duplicate rows 
+cleanDimRed<- unique(cleanDimRed)
+
+# Removing columns having same values 
+cleanData <- cleanDimRed[, sapply(cleanDimRed, function(v) var(v, na.rm=TRUE)!=0)]   # changed it from cleanred to cleanDimRed
+summary(cleanData)
+
+# Dimensionality Reduction
+# Removing attributes having corr. coeff. > 0.7
+correlation <- cor(cleanData[,1:35])
+highCorr <- findCorrelation(correlation, cutoff = 0.7)
+print(highCorr)
+
+```
+
+```{r}
+library(base)
+library(kernlab)
+library(Matrix)
+library(arules)
+
+clean_data<-read.csv("clean_data.csv")
+factor(clean_data[,53])
+```
+#code begin for discretization of data using K-mean clustering algorithm
+#8:14(7lines) lines are code for determining K value for K-mean clustering
+#colindex is index for column in data
+#K is determined for each col for loop can't be used because range
+#of j in for loop below in code keep changing according to data
+```{r}
+mydata<-clean_data[,colindex]
+mydataM<-as.matrix(mydata)
+wss <- (nrow(mydataM)-1)*sum(apply(mydataM,2,var))
+for (j in 2:15) wss[j] <- sum(kmeans(mydataM,
+                                     centers=j,nstart=25,iter.max=1000)$withinss)
+plot(1:15, wss, type="b", xlab="Number of Clusters",
+     ylab="Within groups sum of squares")
+```
+ code for determining k end here
+ k was determined using elbow method on screeplot
+ k-means clustering 
+
+## code for discretization of cleaned data  
+
+```{r}
+for(i in 2:4) clean_data[,i] <- discretize(clean_data[,i],  "cluster", categories=5)
+for(i in 5:7) clean_data[,i] <- discretize(clean_data[,i],  "cluster", categories=3)
+clean_data[,8] <- discretize(clean_data[,8],  "cluster", categories=4)
+clean_data[,9] <- discretize(clean_data[,9],  "cluster", categories=5)
+clean_data[,10] <- discretize(clean_data[,10],  "cluster", categories=4)
+clean_data[,11] <- discretize(clean_data[,11],  "cluster", categories=3)
+clean_data[,12] <- discretize(clean_data[,12],  "cluster", categories=5)
+clean_data[,13] <- discretize(clean_data[,13],  "cluster", categories=3)
+for(i in 15:16)  clean_data[,i] <- discretize(clean_data[,i],  "cluster", categories=4)
+clean_data[,17] <- discretize(clean_data[,17],  "cluster", categories=3)
+for(i in 18:20)clean_data[,i] <- discretize(clean_data[,i],  "cluster", categories=4)
+for(i in 21:22)clean_data[,i] <- discretize(clean_data[,i],  "cluster", categories=3)
+clean_data[,26] <- discretize(clean_data[,26],  "cluster", categories=4)
+for(i in 27:30)clean_data[,i] <- discretize(clean_data[,i],  "cluster", categories=3)
+clean_data[,53] <- discretize(clean_data[,53],  "cluster", categories=4)
+abline(v=discretize(clean_data[,53], method="cluster", categories=4, onlycuts=TRUE), 
+       col="red")
+# make file for discretized data
+write.csv(clean_data,file="discretize_data.csv")
+## convert ratio to categorical data
+discretized_data<-read.csv("discretize_data.csv")
+discretized_data[,1]<-NULL
+
+for(i in 2:4) discretized_data[,i] <- as.ordered(factor(discretized_data[,i],labels=c(0:4)))
+for(i in 5:7) discretized_data[,i] <- as.ordered(factor(discretized_data[,i],labels=c(0:2)))
+discretized_data[,8] <- as.ordered(factor(discretized_data[,8],labels=c(0:3)))
+discretized_data[,9] <- as.ordered(factor(discretized_data[,9],labels=c(0:4)))
+discretized_data[,10] <- as.ordered(factor(discretized_data[,10],labels=c(0:3)))
+discretized_data[,11] <- as.ordered(factor(discretized_data[,11],labels=c(0:2)))
+discretized_data[,12] <- as.ordered(factor(discretized_data[,12],labels=c(0:4)))
+discretized_data[,13] <- as.ordered(factor(discretized_data[,13],labels=c(0:2)))
+discretized_data[,14] <- as.ordered(factor(discretized_data[,14],labels=c(0:2)))# continuous ratio variable
+for(i in 15:16) discretized_data[,i] <- as.ordered(factor(discretized_data[,i],labels=c(0:3)))
+discretized_data[,17] <- as.ordered(factor(discretized_data[,17],labels=c(0:2)))
+for(i in 18:20) discretized_data[,i] <- as.ordered(factor(discretized_data[,i],labels=c(0:3)))
+discretized_data[,21] <- as.ordered(factor(discretized_data[,21],labels=c(1:3)))# continuous interval variable
+discretized_data[,22] <- as.ordered(factor(discretized_data[,22],labels=c(1:3)))
+discretized_data[,26] <- as.ordered(factor(discretized_data[,26],labels=c(1:4)))
+for(i in 27:30) discretized_data[,i] <- as.ordered(factor(discretized_data[,i],labels=c(1:3)))
+discretized_data[,53] <- as.ordered(factor(discretized_data[,53],labels=c(1:4)))
+write.csv(discretized_data,file="categorical_data1.csv")
+#discretozation ends here
+```
+```{r}
+##rough set theory analysis starts
+library(kernlab)
+library(Rcpp)
+library(RoughSets)
+library(RoughSetKnowledgeReduction)
+
+#import categorical data 
+categorical_data <- read.csv("categorical_data1.csv")
+categorical_data[,1]<-NULL
+categorical_data$CHURN<-NULL
+is.data.frame(categorical_data[,2:53])
+dt.rst<-categorical_data[,2:53]
+
+decision1.table <- SF.asDecisionTable(dataset = dt.rst, decision.attr = 52,
+                                      indx.nominal = c(1:52))
+
+
+## compute indiscernibility relation
+IND <- BC.IND.relation.RST(decision1.table, feature.set = NULL)
+## compute lower and upper approximations
+roughset <- BC.LU.approximation.RST(decision1.table, IND)
+## Determine regions
+region.RST <- BC.positive.reg.RST(decision1.table, roughset)
+
+## Shuffle the data with set.seed
+set.seed(52)
+dt.Shuffled <- decision1.table[sample(nrow(decision1.table)),]
+```
+```{r}
+## Split the data into training and testing
+idx <- round(0.9 * nrow(dt.Shuffled))
+wine.tra <-SF.asDecisionTable(dt.Shuffled[1:idx,],
+                              decision.attr = 52, indx.nominal = 52)
+wine.tst <- SF.asDecisionTable(dt.Shuffled[
+  (idx+1):nrow(dt.Shuffled), -ncol(dt.Shuffled)])
+```
+
+```{r}
+## FEATURE SELECTION
+red.rst <- FS.feature.subset.computation(wine.tra,
+                                         method="quickreduct.rst")
+fs.tra <- SF.applyDecTable(wine.tra, red.rst)
+feature.selectedData<-subset(categorical_data,select=colnames(fs.tra))
+write.csv(feature.selectedData,file="feature.selectedData.csv")
+```
+```{r}
+##remove duplicate rules 
+dataset<-read.csv("feature.selectedData.csv")
+dataset[,1]<-NULL
+dataset<-unique(dataset)
+decision.table<-SF.asDecisionTable(dataset)
+```
+```{r}
+##remove inconsistent rules
+dataset1<-dataset[1:34]
+dataset2<-subset(dataset,((duplicated(dataset1)|duplicated(dataset1,
+                                                           fromLast = T)==T)&(dataset$CHURNDEP==1))|duplicated(dataset1)==F)
+write.csv(dataset2,"final_catData.csv")
+
+## RULE INDUCTION
+rules <- RI.indiscernibilityBasedRules.RST(wine.tra,
+                                           red.rst)
+## predicting newdata
+pred.vals <- predict(rules, wine.tst)
+
+##rough set theory analysis ends here
+```
+## analysis using trees
+```{r}
+library(e1071)
+library(kernlab)
+library(rpart)
+library(rpart.plot)
+library(grid)
+library(partykit)
+norm_data<-read.csv("clean_data.csv")
+norm_data$CHURN<-NULL
+##head(norm_data,n=4)
+index <- 1:nrow(norm_data)
+testindex <- sample(index, trunc(length(index)/10))
+testset <- norm_data[testindex,]
+x_test<-testset[1:52]
+trainset <- norm_data[-testindex,]
+x_train<-trainset[1:51]
+##head(x_train)
+y_train<-trainset$CHURNDEP
+y_train.f<-factor(y_train,labels =c("no","yes"))
+x <- cbind(x_train,y_train.f)
+## rpart
+#classification tree
+rpart.model <- rpart(y_train.f ~ ., data = x,method="class")
+summary(rpart.model)
+prp(rpart.model)
+prp(rpart.model,compress = T)
+rpart.pred <- predict(rpart.model, x_test[,-52], type = "class")
+#regression tree
+rpart.anova <- rpart(y_train.f ~ ., data = x, method  = "anova")
+summary(rpart.anova)
+rpart.anovaPred <- predict(rpart.anova, x_test[,-52], type = "vector")
+## compute rpart confusion matrix for classification& regression tree
+table(pred = rpart.pred, true = x_test[,52])
+table(pred = rpart.anovaPred, true = x_test[,52])
+rpart.plot(rpart.model)
+tree<-ctree(y_train.f ~ ., data = x)
+plot(tree, gp = gpar(fontsize = 6),     # font size changed to 6
+     inner_panel=node_inner,
+     ip_args=list(
+       abbreviate = TRUE, 
+       id = FALSE))
+summary(tree)
+
+## analysis using tree end here
+```
+```{r}
+##SVM(support vector machine ) analysis here
+library(e1071)
+library(kernlab)
+library(rpart)
+library(rpart.plot)
+norm_data<-read.csv("Freduced_mixData.csv")
+#head(norm_data,n=4)
+norm_data[,1]<-NULL
+index <- 1:nrow(norm_data)
+testindex <- sample(index, trunc(length(index)/10))
+testset <- norm_data[testindex,]
+x_test<-testset[1:35]
+trainset <- norm_data[-testindex,]
+x_train<-trainset[1:34]
+#head(x_train)
+y_train<-trainset$CHURNDEP
+y_train.f<-factor(y_train,labels =c("no","yes"))
+x <- cbind(x_train,y_train.f)
+# Fitting model in SVM
+svm.fit <-svm(y_train.f ~ ., data = x)
+    
+    ##print(svm.fit)
+    summary(svm.fit)
+    
+    ##plot(svm.fit,x)
+    #Predict Output 
+    svm.pred= predict(svm.fit,x_test[,-35])
+    
+    ## compute svm confusion matrix
+    tab<-table(pred = svm.pred, true = x_test[,35])
+    tab
+    classAgreement(tab)$kappa
+  
+
+tuned <- tune.svm(y_train.f ~ ., data = x, gamma =0.01 , cost = 1)
+summary(tuned)
+
+## SVM analysis ends here
+```
+ ## Code ended here
